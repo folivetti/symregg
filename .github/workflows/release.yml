@@ -43,7 +43,7 @@ jobs:
         job:
           - os:
               name: "Linux"
-              runner: "ubuntu-latest"
+              runner: "ubuntu-latest-arm"
               arch: "aarch64"
               plat: "manylinux"
           #- os:
