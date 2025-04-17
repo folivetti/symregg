@@ -1,0 +1,251 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+  merge_group:
+  workflow_dispatch:
+
+defaults:
+  run:
+    shell: sh
+
+env:
+  # 04-08-2023:
+  # cibuildwheel builds linux wheels in a manylinux_ghc container, which
+  # hardcodes the GHC and Cabal version. To change the GHC and Cabal versions,
+  # you must update the containers in pyproject.toml under tool.cibuildwheel.
+  #
+  # See: https://github.com/wenkokke/manylinux_ghc
+  DEFAULT_GHC_VERSION: "9.12"
+  DEFAULT_CABAL_VERSION: "3.14"
+  DEFAULT_PYTHON_VERSION: "3.12"
+
+jobs:
+  ################################################################################
+  # Build package with cibuildwheel
+  ################################################################################
+
+  build:
+    name: "Build / ${{ matrix.job.os.name }} / ${{ matrix.job.os.plat}}-${{ matrix.job.os.arch }}"
+    runs-on: ${{ matrix.job.os.runner }}
+
+    strategy:
+      matrix:
+        job:
+          - os:
+              name: "Linux"
+              runner: "ubuntu-latest"
+              arch: "aarch64"
+              plat: "manylinux"
+          #- os:
+          #    name: "Linux"
+          #    runner: "ubuntu-latest"
+          #    arch: "i686"
+          #    plat: "manylinux"
+          - os:
+              name: "Linux"
+              runner: "ubuntu-latest"
+              arch: "x86_64"
+              plat: "manylinux"
+          #- os:
+          #    name: "Linux"
+          #    runner: "ubuntu-latest"
+          #    arch: "x86_64"
+          #    plat: "musllinux"
+          - os:
+              name: "macOS"
+              runner: "macos-13"
+              arch: "x86_64"
+              plat: "macosx"
+          - os:
+              name: "macOS"
+              runner: "macos-14"
+              arch: "arm64"
+              plat: "macosx"
+          - os:
+              name: "Windows"
+              runner: "windows-latest"
+              arch: "AMD64"
+              plat: "win"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - # 12-02-2024:
+        # Print the macOS architecture.
+        if: matrix.job.os.name == 'macOS'
+        run: echo "::debug::$(uname -a)"
+
+      - # Required to run job via act: https://github.com/nektos/act
+        uses: actions/setup-python@v5
+        with:
+          cache: "pip"
+          cache-dependency-path: "./requirements-ci.txt"
+          python-version: ${{ env.DEFAULT_PYTHON_VERSION }}
+
+      - # Required to run job via act: https://github.com/nektos/act
+        run: pip install -r "./requirements-ci.txt"
+
+      - # 19-05-2023:
+        # Required to build the wheels on macOS and Windows, but not on Linux,
+        # as Linux builds are run in containers, where GHC and Cabal are built
+        # by the `./scripts/before-all.sh` scripts.
+        if: matrix.job.os.name == 'macOS' || matrix.job.os.name == 'Windows'
+        uses: haskell-actions/setup@v2
+        with:
+          ghc-version: ${{ env.DEFAULT_GHC_VERSION }}
+          cabal-version: ${{ env.DEFAULT_CABAL_VERSION }}
+
+      - # 12-02-2024:
+        # Print the GHC architecture.
+        if: matrix.job.os.name == 'macOS' || matrix.job.os.name == 'Windows'
+        run: echo "::debug::$(ghc --info)"
+        
+      - if: matrix.job.os.name == 'Windows'
+        name: Install build tools with Chocolatey
+        run: |
+          choco install cmake --installargs 'ADD_CMAKE_TO_PATH=System'
+          choco install make
+          choco install mingw
+
+      - if: matrix.job.os.name == 'Windows'
+        name: Build and install nlopt
+        run: |
+          git clone https://github.com/stevengj/nlopt.git
+          cd nlopt
+          mkdir build
+          cd build
+          cmake .. -G "MinGW Makefiles" -DCMAKE_INSTALL_PREFIX=C:\\nlopt
+          mingw32-make
+          mingw32-make install
+
+      - if: matrix.job.os.name == 'Windows'
+        name: Debug nlopt installation
+        run: |
+          dir C:\\nlopt\\lib
+          dir C:\\nlopt\\include
+          dir C:\\nlopt\\bin
+
+      - if: matrix.job.os.name == 'Windows'
+        name: Configure environment variables
+        run: |
+          echo "LIBRARY_PATH=C:\\nlopt\\lib" >> $env:GITHUB_ENV
+          echo "CPATH=C:\\nlopt\\include" >> $env:GITHUB_ENV
+          echo "PATH=C:\\nlopt\\bin${{ env.PATH }}" >> $env:GITHUB_ENV
+
+     
+      - if: matrix.job.os.name == 'macOS'
+        name: Install Homebrew dependencies
+        run: |
+          brew update
+          brew install nlopt
+      - if: matrix.job.os.name == 'macOS'
+        name: Configure environment variables
+        run: |
+          echo "LIBRARY_PATH=/usr/local/lib:/opt/homebrew/lib" >> $GITHUB_ENV
+          echo "CPATH=/usr/local/include:/opt/homebrew/include" >> $GITHUB_ENV
+          echo "DYLD_LIBRARY_PATH=/opt/homebrew/lib" >> $GITHUB_ENV
+          echo "MACOSX_DEPLOYMENT_TARGET=13.0" >> $GITHUB_ENV
+          
+      - # 19-06-2023:
+        # Required to build aarch64 wheels.
+        if: matrix.job.os.name == 'Linux' && matrix.job.os.arch == 'aarch64'
+        name: Set up QEMU (linux/aarch64)
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: "arm64"
+
+      - # 19-06-2023:
+        # Required to build i686 wheels.
+        if: matrix.job.os.name == 'Linux' && matrix.job.os.arch == 'i686'
+        name: Set up QEMU (linux/i686)
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: "386"
+
+      - uses: pypa/cibuildwheel@v2.21.3
+        with:
+          output-dir: "./wheelhouse"
+          config-file: "{package}/pyproject.toml"
+        env:
+          CIBW_ARCHS: "${{ matrix.job.os.arch }}"
+          CIBW_BUILD: "*${{ matrix.job.os.plat }}*"
+          MACOSX_DEPLOYMENT_TARGET: ${{ matrix.os.runner == 'macos-13' && '13.0' || '14.0' }}
+      - # Build source distribution (sdist)
+        run: |
+          pip install build
+          python -m build --sdist --outdir ./wheelhouse
+
+      - name: Upload wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: "wheelhouse-${{ matrix.job.os.plat }}-${{ matrix.job.os.arch }}"
+          path: |
+             ./wheelhouse/*.whl
+             ./wheelhouse/*.tar.gz
+
+  ################################################################################
+  # Publish package to GitHub Releases
+  ################################################################################
+
+  publish-to-github-releases:
+    name: Publish to GitHub Releases
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [build]
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: "wheelhouse-*-*"
+          path: "./wheelhouse"
+          merge-multiple: true
+
+      - name: Publish to GitHub Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          files: "./wheelhouse/*"
+          fail_on_unmatched_files: true
+
+  ################################################################################
+  # Publish package to PyPI
+  ################################################################################
+
+  publish-to-pypi:
+    name: Publish to PyPI
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [build]
+
+    environment:
+      name: pypi
+      url: https://pypi.org/p/pysymregg
+
+    permissions:
+      id-token: write # IMPORTANT: this permission is mandatory for trusted publishing
+
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: "wheelhouse-*-*"
+          path: "./wheelhouse"
+          merge-multiple: true
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: "./wheelhouse"
