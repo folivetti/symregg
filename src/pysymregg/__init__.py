@@ -59,7 +59,105 @@ def pysymregg_run(dataset: str, gen: int, alg: str, maxSize: int, nonterminals: 
         return unsafe_hs_pysymregg_run(dataset, gen, alg, maxSize, nonterminals, loss, optIter, optRepeat, nParams, split, dumpTo, loadFrom)
 
 class PySymRegg(BaseEstimator, RegressorMixin):
+    """ Builds a symbolic regression model using symregg.
+
+    Parameters
+    ----------
+    gen : int, default=100
+        The number of generations.
+
+    alg : {"BestFirst", "OnlyRandom"}, default="BestFirst"
+        Whether to try combining expressions from the fronts/elite (BestFirst)
+        or just trying to generate random expressions (OnlyRandom).
+
+    maxSize : int, default=15
+        Maximum allowed size for the expression.
+        This should not be larger than 100 as the e-graph may grow
+        too large.
+
+    nonterminals : str, default="add,sub,mul,div"
+        String of a comma separated list of nonterminals.
+        These are the allowed functions to be used during the search.
+        Available functions: add,sub,mul,div,power,powerabs,aq,abs,sin,cos,
+                             tan,sinh,cosh,tanh,asin,acos,atan,asinh,acosh,
+                             atanh,sqrt,sqrtabs,cbrt,square,log,logabs,exp,
+                             recip,cube.
+        Where `aq` is the analytical quotient (x/sqrt(1 + y^2)),
+              `powerabs` is the protected power (x^|y|)
+              `sqrtabs` is the protected sqrt (sqrt(|x|))
+              `logabs` is the protected log (log(|x|))
+              `recip` is the reciprocal (1/x)
+              `cbrt` is the cubic root
+
+    loss : {"MSE", "Gaussian", "Bernoulli", "Poisson"}, default="MSE"
+        Loss function used to evaluate the expressions:
+        - MSE (mean squared error) should be used for regression problems.
+        - Gaussian likelihood should be used for regression problem when you want to
+          fit the error term.
+        - Bernoulli likelihood should be used for classification problem.
+        - Poisson likelihood should be used when the data distribution follows a Poisson.
+
+    optIter : int, default=50
+        Number of iterations for the parameter optimization.
+
+    optRepeat : int, default=2
+        Number of restarts for the parameter optimization.
+
+    nParams : int, default=-1
+        Maximum number of parameters. If set to -1 it will
+        allow the expression to have any number of parameters.
+        If set to a number > 0, it will limit the number of parameters,
+        but allow it to appear multiple times in the expression.
+        E.g., t0 * x0 + exp(t0*x0 + t1)
+
+    split : int, default=1
+        How to split the data to create the validation set.
+        If set to 1, it will use the whole data for fitting the parameter and
+        calculating the fitness function.
+        If set to n>1, it will use 1/n for calculating the fitness function
+        and the reminder for fitting the parameter.
+
+    dumpTo : str, default=""
+        If not empty, it will save the final e-graph into the filename.
+
+    loadFrom : str, default=""
+        If not empty, it will load an e-graph and resume the search.
+        The user must ensure that the loaded e-graph is from the same
+        dataset and loss function.
+
+    Examples
+    --------
+    >>> from pysymregg import PySymRegg
+    >>> import numpy as np
+    >>> X = np.arange(100).reshape(100, 1)
+    >>> y = np.zeros((100, ))
+    >>> estimator = PySymRegg()
+    >>> estimator.fit(X, y)
+    """
     def __init__(self, gen = 100, alg = "BestFirst", maxSize = 15, nonterminals = "add,sub,mul,div", loss = "MSE", optIter = 50, optRepeat = 2, nParams = -1, split = 1, dumpTo = "", loadFrom = ""):
+        nts = "add,sub,mul,div,power,powerabs,\
+               aq,abs,sin,cos,tan,sinh,cosh,tanh,\
+               asin,acos,atan,asinh,acosh,atanh,sqrt,\
+               sqrtabs,cbrt,square,log,logabs,exp,recip,cube"
+        losses = ["MSE", "Gaussian", "Bernoulli", "Poisson"]
+        if gen < 1:
+            raise ValueError('gen should be greater than 1')
+        if alg not in ["BestFirst", "OnlyRandom"]:
+            raise ValueError('alg must be either BestFirst or OnlyRandom')
+        if maxSize < 1 or maxSize > 100:
+            raise ValueError('maxSize should be a value between 1 and 100')
+        if any(t not in nts for t in nonterminals):
+            raise ValueError('nonterminals must be a comma separated list of one or more of ', nts)
+        if loss not in losses:
+            raise ValueError('loss must be one of ', losses)
+        if optIter < 0:
+            raise ValueError('optIter must be a positive number')
+        if optRepeat < 0:
+            raise ValueError('optRepeat must be a positive number')
+        if nParams < -1:
+            raise ValueError('nParams must be either -1 or a positive number')
+        if split < 1:
+            raise ValueError('split must be equal or greater than 1')
         self.gen = gen
         self.alg = alg
         self.maxSize = maxSize
@@ -74,6 +172,18 @@ class PySymRegg(BaseEstimator, RegressorMixin):
         self.is_fitted_ = False
 
     def fit(self, X, y):
+        ''' Fits the regression model.
+
+        Parameters
+        ----------
+        X : np.array
+            An m x n np.array describing m observations of n features.
+        y : np.array
+            An np.array of size m with the measured target values.
+
+        A table with the fitted models and additional information
+        will be stored as a Pandas dataframe in self.results.
+        '''
         if X.ndim == 1:
             X = X.reshape(-1,1)
         y = y.reshape(-1, 1)
@@ -93,6 +203,19 @@ class PySymRegg(BaseEstimator, RegressorMixin):
         return self
 
     def predict(self, X):
+        ''' Generates the prediction using the best model (selected by accuracy)
+
+        Parameters
+        ----------
+        X : np.array
+            An m x n np.array describing m observations of n features.
+            This array must have the same number of features as the training data.
+
+        Return
+        ------
+        y : np.array
+            A vector of predictions
+        '''
         check_is_fitted(self)
         return self.evaluate_best_model(self.model_, X)
     def evaluate_best_model(self, x):
