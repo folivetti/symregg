@@ -154,7 +154,7 @@ egraphSearch dataTrainVals args = do
 
   when ((not.null) (_dumpTo args)) $ get >>= (io . BS.writeFile (_dumpTo args) . encode )
   pf <- paretoFront fitFun (_maxSize args) printExpr
-  pure $ "id,Expression,Numpy,theta,size\n" <> pf
+  pure $ "id,Expression,Numpy,theta,size,loss,maxLoss\n" <> pf
 
   where
     maxSize = _maxSize args
@@ -243,24 +243,28 @@ egraphSearch dataTrainVals args = do
         thetas' <- gets (_theta . _info . (IM.! ec) . _eClass)
         bestExpr <- getBestExpr ec
         let nParams = countParamsUniq bestExpr
-            fromSz (MA.Sz x) = x
+            fromSz (MA.Sz x) = x 
             nThetas  = Prelude.map (fromSz . MA.size) thetas'
         (_, thetas) <- if Prelude.any (/=nParams) nThetas
                         then fitFun bestExpr
                         else pure (1.0, thetas')
 
-        ts <- forM (Prelude.zip dataTrainVals thetas) $ \((dataTrain, dataVal), theta) -> do
+        maxLoss <- negate . fromJust <$> getFitness ec
+        ts <- forM (Prelude.zip3 [0..] dataTrainVals thetas) $ \(view, (dataTrain, dataVal), theta) -> do
             let (x, y, mYErr) = dataTrain
                 (x_val, y_val, mYErr_val) = dataVal
                 distribution = _distribution args
                 best'     = if shouldReparam then relabelParams bestExpr else relabelParamsOrder bestExpr
                 expr      = paramsToConst (MA.toList theta) best'
-                thetaStr   = intercalate ";" $ Prelude.map show (MA.toList theta)
-                showFun    = showExpr expr
-                showFunNp  = showPython best'
-            pure $ show ix <> "," <> showFun <> "," <> "\"" <> showFunNp <> "\"" <> ","
-                    <> thetaStr <> "," <> show (countNodes $ convertProtectedOps expr) <> "\n"
+                thetaStr  = intercalate ";" $ Prelude.map show (MA.toList theta)
+                showFun   = showExpr expr
+                showFunNp = showPython best'
+                mse_train = nll distribution mYErr_val x_val y_val best' theta
+            pure . (<> "\n") . intercalate "," $ [show ix, show view, showFun, "\"" <> showFunNp <> "\"", thetaStr, show (countNodes $ convertProtectedOps expr), if isNaN mse_train then "1e+10" else show mse_train, show (negate maxLoss) ]
         pure (concat ts)
+    insertTerms =
+        forM terms $ \t -> do fromTree myCost t >>= canonical
+
 
 
     -- From eggp
