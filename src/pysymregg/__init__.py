@@ -217,7 +217,7 @@ class PySymRegg(BaseEstimator, RegressorMixin):
             A vector of predictions
         '''
         check_is_fitted(self)
-        return self.evaluate_best_model(self.model_, X)
+        return self.evaluate_best_model(X)
     def evaluate_best_model(self, x):
         if x.ndim == 1:
             x = x.reshape(-1,1)
