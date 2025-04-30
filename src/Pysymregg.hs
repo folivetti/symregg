@@ -262,8 +262,8 @@ egraphSearch dataTrainVals args = do
                 mse_train = nll distribution mYErr_val x_val y_val best' theta
             pure . (<> "\n") . intercalate "," $ [show ix, show view, showFun, "\"" <> showFunNp <> "\"", thetaStr, show (countNodes $ convertProtectedOps expr), if isNaN mse_train then "1e+10" else show mse_train, show (negate maxLoss) ]
         pure (concat ts)
-    insertTerms =
-        forM terms $ \t -> do fromTree myCost t >>= canonical
+    -- insertTerms =
+    --    forM terms $ \t -> do fromTree myCost t >>= canonical
 
 
 
