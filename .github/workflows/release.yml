@@ -232,7 +232,7 @@ jobs:
 
     environment:
       name: pypi
-      url: https://pypi.org/p/pysymregg
+      url: https://pypi.org/p/symregg
 
     permissions:
       id-token: write # IMPORTANT: this permission is mandatory for trusted publishing

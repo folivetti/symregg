@@ -1,11 +1,4 @@
-{-# LANGUAGE  BlockArguments #-}
-{-# LANGUAGE  TupleSections #-}
-{-# LANGUAGE  MultiWayIf #-}
-{-# LANGUAGE  OverloadedStrings #-}
-{-# LANGUAGE  BangPatterns #-}
-{-# LANGUAGE  TypeSynonymInstances, FlexibleInstances #-}
-
-module Pysymregg where
+module Search where
 
 import Algorithm.EqSat.Egraph
 import Algorithm.EqSat.Simplify
@@ -25,7 +18,7 @@ import Data.SRTree.Print ( showExpr, showPython )
 import Options.Applicative as Opt hiding (Const)
 import Random
 import System.Random
-import Data.List ( intercalate )
+import Data.List ( intercalate, zip4 )
 import qualified Data.IntSet as IntSet
 import Algorithm.EqSat (runEqSat)
 import Data.Binary ( encode, decode )
@@ -37,69 +30,28 @@ import qualified Data.Map.Strict as Map
 
 import Util
 
-import Foreign.C (CInt (..), CDouble (..))
-import Foreign.C.String (CString, newCString, withCString, peekCString, peekCAString, newCAString)
-import Paths_Pysymregg (version)
-import System.Environment (getArgs)
-import System.Exit (ExitCode (..))
-import Text.Read (readMaybe)
-import Data.Version (showVersion)
-import Control.Exception (Exception (..), SomeException (..), handle)
-
-foreign import ccall unsafe_py_write_stdout :: CString -> IO ()
-
-py_write_stdout :: String -> IO ()
-py_write_stdout str = withCString str unsafe_py_write_stdout
-
-foreign import ccall unsafe_py_write_stderr :: CString -> IO ()
-
-py_write_stderr :: String -> IO ()
-py_write_stderr str = withCString str unsafe_py_write_stderr
-
-foreign export ccall hs_pysymregg_version :: IO CString
-
-hs_pysymregg_version :: IO CString
-hs_pysymregg_version =
-  newCString (showVersion version)
-
-foreign export ccall hs_pysymregg_main :: IO CInt
-
-exitHandler :: ExitCode -> IO CInt
-exitHandler ExitSuccess = return 0
-exitHandler (ExitFailure n) = return (fromIntegral n)
-
-uncaughtExceptionHandler :: SomeException -> IO CInt
-uncaughtExceptionHandler (SomeException e) =
-  py_write_stderr (displayException e) >> return 1
-
-hs_pysymregg_main :: IO CInt
-hs_pysymregg_main =
-  handle uncaughtExceptionHandler $
-    handle exitHandler $ do
-      getArgs >>= \args -> do
-        --out <- pyeggp args
-        case "" of
-          ""  -> py_write_stdout $ "wrong arguments"
-          css -> py_write_stdout css
-      return 0
-
-foreign export ccall hs_pysymregg_run :: CString -> CInt -> CString -> CInt -> CString -> CString -> CInt -> CInt -> CInt -> CInt -> CString -> CString -> IO CString
-
-hs_pysymregg_run :: CString -> CInt -> CString -> CInt -> CString -> CString -> CInt -> CInt -> CInt -> CInt -> CString -> CString -> IO CString
-hs_pysymregg_run dataset gens alg maxSize nonterminals loss optIter optRepeat nParams split dumpTo loadFrom = do
-  dataset' <- peekCString dataset
-  nonterminals' <- peekCString nonterminals
-  alg' <- peekCString alg
-  loss' <- peekCString loss
-  dumpTo' <- peekCString dumpTo
-  loadFrom' <- peekCString loadFrom
-  out  <- pysymregg dataset' (fromIntegral gens) alg' (fromIntegral maxSize) nonterminals' loss' (fromIntegral optIter) (fromIntegral optRepeat) (fromIntegral nParams) (fromIntegral split) dumpTo' loadFrom'
-  newCString out
-
 data Alg = OnlyRandom | BestFirst deriving (Show, Read, Eq)
 
-egraphSearch :: [(DataSet, DataSet)] -> Args -> StateT EGraph (StateT StdGen IO) String
-egraphSearch dataTrainVals args = do
+data Args = Args
+  { _dataset      :: String,
+    _testData     :: String,
+    _gens         :: Int,
+    _alg          :: Alg,
+    _maxSize      :: Int,
+    _split        :: Int,
+    _trace        :: Bool,
+    _distribution :: Distribution,
+    _optIter      :: Int,
+    _optRepeat    :: Int,
+    _nParams      :: Int,
+    _nonterminals :: String,
+    _dumpTo       :: String,
+    _loadFrom     :: String
+  }
+  deriving (Show)
+
+egraphSearch :: [(DataSet, DataSet)] -> [DataSet] -> Args -> StateT EGraph (StateT StdGen IO) String
+egraphSearch dataTrainVals dataTests args = do
   if null (_loadFrom args)
     then do ecFst <- insertRndExpr (_maxSize args) rndTerm rndNonTerm2
             updateIfNothing fitFun ecFst
@@ -111,9 +63,14 @@ egraphSearch dataTrainVals args = do
   nCls <- gets (IM.size . _eClass)
   nUnev <- gets (IntSet.size . _unevaluated . _eDB)
   let nEvs = nCls - nUnev
+  allEcs <- getAllEvaluatedEClasses >>= Prelude.mapM canonical
+  eqs <- if _trace args
+            then forM (Prelude.zip [0..] allEcs) $ uncurry printExpr
+            else pure []
 
-  while ((<(_gens args)) . snd) (10, nEvs) $
-    \(radius, nEvs) ->
+
+  (outputs,_) <- while ((<(_gens args)) . snd) (eqs, nEvs) $
+    \(output, nEvs) ->
       do
        nCls  <- gets (IM.size . _eClass)
        ecN <- case (_alg args) of
@@ -148,13 +105,18 @@ egraphSearch dataTrainVals args = do
        upd <- updateIfNothing fitFun ecN'
        when upd $ runEqSat myCost (if _nParams args == 0 then rewritesWithConstant else rewritesParams) 1 >> cleanDB >> refitChanged
 
-       let radius' = if (not upd) then (max 10 $ min (500 `div` (_maxSize args)) (radius+1)) else (max 10 $ radius-1)
-           nEvs'    = nEvs + if upd then 1 else 0
-       pure (radius', nEvs')
+       output' <- if (upd && (_trace args))
+                     then (:output) <$> (canonical ecN' >>= printExpr nEvs)
+                     else pure output
+
+       let nEvs'    = nEvs + if upd then 1 else 0
+       pure (output', nEvs')
 
   when ((not.null) (_dumpTo args)) $ get >>= (io . BS.writeFile (_dumpTo args) . encode )
-  pf <- paretoFront fitFun (_maxSize args) printExpr
-  pure $ "id,Expression,Numpy,theta,size,loss,maxLoss\n" <> pf
+  pf <- if _trace args
+           then pure (Prelude.reverse outputs)
+           else paretoFront fitFun (_maxSize args) printExpr
+  pure $ unlines (csvHeader : concat pf)
 
   where
     maxSize = _maxSize args
@@ -225,7 +187,7 @@ egraphSearch dataTrainVals args = do
                                      then [param 0]
                                      else Prelude.map param [0 .. _nParams args - 1]
     rndTerm    = Random.randomFrom terms
-    rndNonTerm = Random.randomFrom $ (Uni Id ()) : nonTerms
+    rndNonTerm = Random.randomFrom nonTerms
     rndNonTerm2 = Random.randomFrom nonTerms
     uniNonTerms = Prelude.filter isUni nonTerms
     binNonTerms = Prelude.filter isBin nonTerms
@@ -238,33 +200,46 @@ egraphSearch dataTrainVals args = do
         forM terms $ \t -> do fromTree myCost t >>= canonical
 
 
-    printExpr :: Int -> EClassId -> RndEGraph String
+    printExpr :: Int -> EClassId -> RndEGraph [String]
     printExpr ix ec = do
         thetas' <- gets (_theta . _info . (IM.! ec) . _eClass)
         bestExpr <- getBestExpr ec
-        let nParams = countParamsUniq bestExpr
-            fromSz (MA.Sz x) = x 
-            nThetas  = Prelude.map (fromSz . MA.size) thetas'
+
+        let best'   = if shouldReparam then relabelParams bestExpr else relabelParamsOrder bestExpr
+            nParams = countParamsUniq best'
+            fromSz (MA.Sz x) = x
+            nThetas = Prelude.map (fromSz . MA.size) thetas'
         (_, thetas) <- if Prelude.any (/=nParams) nThetas
-                        then fitFun bestExpr
+                        then fitFun best'
                         else pure (1.0, thetas')
 
         maxLoss <- negate . fromJust <$> getFitness ec
-        ts <- forM (Prelude.zip3 [0..] dataTrainVals thetas) $ \(view, (dataTrain, dataVal), theta) -> do
+        ts <- forM (Data.List.zip4 [0..] dataTrainVals dataTests thetas) $ \(view, (dataTrain, dataVal), dataTest, theta) -> do
             let (x, y, mYErr) = dataTrain
                 (x_val, y_val, mYErr_val) = dataVal
+                (x_te, y_te, mYErr_te) = dataTest
                 distribution = _distribution args
-                best'     = if shouldReparam then relabelParams bestExpr else relabelParamsOrder bestExpr
-                expr      = paramsToConst (MA.toList theta) best'
-                thetaStr  = intercalate ";" $ Prelude.map show (MA.toList theta)
-                showFun   = showExpr expr
-                showFunNp = showPython best'
-                mse_train = nll distribution mYErr_val x_val y_val best' theta
-            pure . (<> "\n") . intercalate "," $ [show ix, show view, showFun, "\"" <> showFunNp <> "\"", thetaStr, show (countNodes $ convertProtectedOps expr), if isNaN mse_train then "1e+10" else show mse_train, show (negate maxLoss) ]
-        pure (concat ts)
-    -- insertTerms =
-    --    forM terms $ \t -> do fromTree myCost t >>= canonical
 
+                expr      = paramsToConst (MA.toList theta) best'
+                showNA z  = if isNaN z then "" else show z
+                r2_train  = r2 x y best' theta
+                r2_val    = r2 x_val y_val best' theta
+                r2_te     = r2 x_te y_te best' theta
+                nll_train  = nll distribution mYErr x y best' theta
+                nll_val    = nll distribution mYErr_val x_val y_val best' theta
+                nll_te     = nll distribution mYErr_te x_te y_te best' theta
+                mdl_train  = mdl distribution mYErr x y theta best'
+                mdl_val    = mdl distribution mYErr_val x_val y_val theta best'
+                mdl_te     = mdl distribution mYErr_te x_te y_te theta best'
+                vals       = intercalate ","
+                           $ Prelude.map showNA [ nll_train, nll_val, nll_te, maxLoss
+                                                , r2_train, r2_val, r2_te
+                                                , mdl_train, mdl_val, mdl_te]
+                thetaStr   = intercalate ";" $ Prelude.map show (MA.toList theta)
+            pure $ show ix <> "," <> show view <> "," <> showExpr expr <> "," <> "\"" <> showPython best' <> "\","
+                           <> thetaStr <> "," <> show (countNodes $ convertProtectedOps expr)
+                           <> "," <> vals
+        pure ts
 
 
     -- From eggp
@@ -393,41 +368,3 @@ egraphSearch dataTrainVals args = do
                                                     Just gf -> do ec  <- gets ((Map.! en) . _eNodeToEClass)
                                                                   en' <- canonize (gf ec)
                                                                   doesNotExistGens grands en'
-
-data Args = Args
-  { _dataset      :: String,
-    -- _testData     :: String,
-    _gens         :: Int,
-    _alg          :: Alg,
-    _maxSize      :: Int,
-    _split        :: Int,
-    -- _printPareto  :: Bool,
-    -- _trace        :: Bool,
-    _distribution :: Distribution,
-    _optIter      :: Int,
-    _optRepeat    :: Int,
-    _nParams      :: Int,
-    _nonterminals :: String,
-    _dumpTo       :: String,
-    _loadFrom     :: String
-  }
-  deriving (Show)
-
-pysymregg :: String -> Int -> String -> Int -> String -> String -> Int -> Int -> Int -> Int -> String -> String -> IO String
-pysymregg dataset gens alg maxSize nonterminals loss optIter optRepeat nParams split dumpTo loadFrom =
-  case readMaybe alg of
-       Nothing -> pure $ "Invalid algorithm " <> alg
-       Just a  -> case readMaybe loss of
-                       Nothing -> pure $ "Invalid loss function " <> loss
-                       Just l  -> let arg = Args dataset gens a maxSize split l optIter optRepeat nParams nonterminals dumpTo loadFrom
-                                  in symregg arg
-
-symregg :: Args -> IO String
-symregg args = do
-  g    <- getStdGen
-  let datasets = words (_dataset args)
-  dataTrains' <- Prelude.mapM (flip loadTrainingOnly True) datasets -- load all datasets
-
-  let (dataTrainVals, g') = runState (Prelude.mapM (`splitData` (_split args)) dataTrains') g
-      alg = evalStateT (egraphSearch dataTrainVals args) emptyGraph
-  evalStateT alg g'

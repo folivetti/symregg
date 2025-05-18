@@ -34,11 +34,13 @@ import Algorithm.EqSat.Queries
 
 import Debug.Trace
 
+-- Environment of an e-graph with support to random generator and IO
 type RndEGraph a = EGraphST (StateT StdGen IO) a
+-- a dataset is a triple (X, y, y_error)
 type DataSet = (SRMatrix, PVector, Maybe PVector)
 
 csvHeader :: String
-csvHeader = "id,Expression,theta,size,MSE_train,MSE_val,MSE_test,R2_train,R2_val,R2_test,nll_train,nll_val,nll_test,mdl_train,mdl_val,mdl_test"
+csvHeader = "id,view,Expression,Numpy,theta,size,loss_train,loss_val,loss_test,maxloss,R2_train,R2_val,R2_test,mdl_train,mdl_val,mdl_test"
 
 io :: IO a -> RndEGraph a
 io = lift . lift
@@ -54,9 +56,11 @@ myCost (Param _)   = 1
 myCost (Bin _ l r) = 2 + l + r
 myCost (Uni _ t)   = 3 + t
 
-while :: Monad f => (t -> Bool) -> t -> (t -> f t) -> f ()
-while p arg prog = do when (p arg) do arg' <- prog arg
-                                      while p arg' prog
+while :: Monad f => (t -> Bool) -> t -> (t -> f t) -> f t
+while p arg prog = do if (p arg)
+                      then do arg' <- prog arg
+                              while p arg' prog
+                      else pure arg
 
 fitnessFun :: Int -> Distribution -> DataSet -> DataSet -> Fix SRTree -> PVector -> (Double, PVector)
 fitnessFun nIter distribution (x, y, mYErr) (x_val, y_val, mYErr_val) tree thetaOrig =
@@ -235,16 +239,17 @@ printBest fitFun printExprFun = do
       printExprFun 0 bec
 
 --paretoFront :: Int -> (Int -> EClassId -> RndEGraph ()) -> RndEGraph ()
-paretoFront fitFun maxSize printExprFun = concat <$> go 1 0 (-(1.0/0.0))
+paretoFront fitFun maxSize printExprFun = go 1 0 (-(1.0/0.0))
     where
-    go :: Int -> Int -> Double -> RndEGraph [String]
+    go :: Int -> Int -> Double -> RndEGraph [[String]]
     go n ix f
         | n > maxSize = pure []
         | otherwise   = do
             ecList <- getBestExprWithSize n
             if not (null ecList)
                 then do let (ec, mf) = head ecList
-                            improved = fromJust mf > f
+                            f' = fromJust mf
+                            improved = f' > f && (not . isNaN) f' && (not . isInfinite) f'
                         ec' <- canonical ec
                         if improved
                                 then do refit fitFun ec'

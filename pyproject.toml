@@ -3,18 +3,14 @@ requires = [
   "find_libpython >=0.3,<0.5; sys_platform == 'win32'",
   "setuptools >=45",
   "swig >=4,<5",
-  "numpy >=2",
-  "pandas >=2.2",
-  "scikit-learn >=1.6",
-#  "nlopt >= 2.6.2",
 ]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "pysymregg"
-version = "1.0.2"
+name = "symregg"
+version = "1.0.3"
 authors = [{ name = "Fabricio Olivetti", email = "folivetti@users.noreply.github.com" }]
-description = "Python Wheels for SymRegg algorithm."
+description = "CLI and Python binding for SymRegg algorithm."
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.9"
@@ -29,13 +25,13 @@ classifiers = [
   "Programming Language :: Python :: 3.13",
   "Programming Language :: Python :: Implementation :: CPython",
 ]
-dependencies = ["typing_extensions >=4.6,<5; python_version<'3.8'"]
+dependencies = ["typing_extensions >=4.6,<5; python_version<'3.8'", "numpy >=2", "pandas >=2.2", "scikit-learn >=1.6"]
 
 [project.optional-dependencies]
 mypy = ["types_setuptools >=45"]
 
 [project.scripts]
-"pysymregg" = "pysymregg.__main__:main"
+"symregg" = "symregg.__main__:main"
 
 [tool.bumpver]
 current_version = "v1.0.0"
@@ -50,10 +46,10 @@ push = true
   '^version = "{pep440_version}"$',
   '^current_version = "{version}"$',
 ]
-"src/pysymregg/__init__.py" = [
+"src/symregg/__init__.py" = [
   '^VERSION: str = "{pep440_version}"$',
 ]
-"pysymregg.cabal" = ['^version:         {pep440_version}$']
+"symregg.cabal" = ['^version:         {pep440_version}$']
 
 [tool.cibuildwheel]
 # 18-04-2023:

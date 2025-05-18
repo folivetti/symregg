@@ -1,0 +1,2 @@
+[console_scripts]
+symregg = symregg.__main__:main

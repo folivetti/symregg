@@ -1,10 +1,10 @@
 import sys
 from typing import NoReturn
-import pysymregg
+import symregg
 
 
 def main() -> NoReturn:
-    sys.exit(pysymregg.main(sys.argv))
+    sys.exit(symregg.main(sys.argv))
 
 
 if __name__ == "__main__":

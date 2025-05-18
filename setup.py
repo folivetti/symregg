@@ -11,10 +11,9 @@ from setuptools import Extension, setup
 from setuptools.command.build_ext import build_ext
 
 ext_module = Extension(
-    name="pysymregg._binding",
-    sources=["src/pysymregg/binding.i"],
+    name="symregg._binding",
+    sources=["src/symregg/binding.i"],
 )
-
 
 class cabal_build_ext(build_ext):
     def finalize_options(self) -> None:
@@ -86,18 +85,17 @@ class cabal_build_ext(build_ext):
     def cabal_build_ext(self, ext: Extension) -> None:
         #self.build_temp = self.build_temp.replace("temp","lib")
         self.mkpath(self.build_temp)
-        print(self.build_temp, "<<<<<<<<<<<<<<<<<<<<<<<<<<<<")
         if sys.platform in ["win32", "cygwin"]:
             self.cabal(["build"], env={"INSTALLDIR": self.build_temp, "LIBRARY_PATH": "C:\\nlopt\\lib", 
                                        "CPATH": "C:\\nlopt\\include",
                                        "PATH":"C:\\nlopt\\bin;" + os.environ.get("PATH", ""), **os.environ})
         elif sys.platform in ["linux"]:
             self.cabal(["build"], env={"INSTALLDIR": self.build_temp, "LIBRARY_PATH": "/usr/local/lib64", "LD_LIBRARY_PATH":"/usr/local/lib64", "C_INCLUDE_PATH": "/usr/local/include", "PKG_CONFIG_PATH": "/usr/local/lib64/pkgconfig", **os.environ})
-            
         else:
             self.cabal(["build"], env={"INSTALLDIR": self.build_temp, "LIBRARY_PATH": "/usr/local/lib64", "LD_LIBRARY_PATH":"/usr/local/lib64", "C_INCLUDE_PATH": "/usr/local/include", "PKG_CONFIG_PATH": "/usr/local/lib64/pkgconfig", 'MACOSX_DEPLOYMENT_TARGET': '13.0', **os.environ})
         lib_filename = self.get_cabal_foreign_library_filename(ext)
         ext_fullpath = self.get_ext_fullpath(ext.name)
+
         self.mkpath(os.path.dirname(ext_fullpath))
         self.copy_file(os.path.join(self.build_temp, lib_filename), ext_fullpath)
 
@@ -122,7 +120,6 @@ class cabal_build_ext(build_ext):
     ) -> None:
         args = [self.find_cabal(), *args]
         cmd = " ".join(args)
-        print(cmd)
         exitCode = subprocess.call(args, env=env)
         if exitCode != 0:
             raise OSError(f"error occurred when running '{cmd}'")
