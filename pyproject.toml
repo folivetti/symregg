@@ -8,7 +8,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "symregg"
-version = "1.0.3"
+version = "1.0.4"
 authors = [{ name = "Fabricio Olivetti", email = "folivetti@users.noreply.github.com" }]
 description = "CLI and Python binding for SymRegg algorithm."
 readme = "README.md"

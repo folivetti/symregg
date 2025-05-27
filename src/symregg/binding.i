@@ -10,8 +10,8 @@ int unsafe_hs_symregg_main() {
   return hs_symregg_main();
 }
 
-char * unsafe_hs_symregg_run( char *dataset, int gens, char * alg, int maxSize, char *nonterminals,  char *loss, int optIter, int optRepeat, int nParams, int split, int trace, char *dumpTo,  char *loadFrom ) {
-  return hs_symregg_run(dataset, gens, alg, maxSize, nonterminals, loss, optIter, optRepeat, nParams, split, trace, dumpTo, loadFrom);
+char * unsafe_hs_symregg_run( char *dataset, int gens, char * alg, int maxSize, char *nonterminals,  char *loss, int optIter, int optRepeat, int nParams, int split, int trace, int simplify, char *dumpTo,  char *loadFrom ) {
+  return hs_symregg_run(dataset, gens, alg, maxSize, nonterminals, loss, optIter, optRepeat, nParams, split, trace, simplify, dumpTo, loadFrom);
 }
 
 void unsafe_hs_symregg_init(int argc, char **argv) {
@@ -59,6 +59,6 @@ void unsafe_py_write_stderr( char * str) {
 
 char * unsafe_hs_symregg_version();
 int unsafe_hs_symregg_main();
-char * unsafe_hs_symregg_run( char *dataset, int gens, char * alg, int maxSize, char *nonterminals,  char *loss, int optIter, int optRepeat, int nParams, int split, int trace, char *dumpTo,  char *loadFrom );
+char * unsafe_hs_symregg_run( char *dataset, int gens, char * alg, int maxSize, char *nonterminals,  char *loss, int optIter, int optRepeat, int nParams, int split, int trace, int simplify, char *dumpTo,  char *loadFrom );
 void unsafe_hs_symregg_init(int argc, char **argv);
 void unsafe_hs_symregg_exit();

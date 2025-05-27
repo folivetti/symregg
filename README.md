@@ -1,8 +1,10 @@
 # SymRegg - Equality graph Assisted Search Technique for Equation Discovery (Symbolic Regression)
 
+A Python package for symbolic regression using e-graphs. PySymRegg is built on top of the SymRegg algorithm and provides a scikit-learn compatible API for symbolic regression tasks.
+
 This repository provides a CLI and a Python package for SymRegg with a scikit-learn compatible API for symbolic regression.
 
-A Python package for symbolic regression using e-graphs. PySymRegg is built on top of the SymRegg algorithm and provides a scikit-learn compatible API for symbolic regression tasks.
+Instructions:
 
 - [CLI version](#cli)
 - [Python version](#python)
@@ -81,13 +83,7 @@ pip install symregg
 
 under your Python environment.
 
-### Method 2: Pre-compile binaries
-
-Go to the [releases](https://github.com/folivetti/symregg/tags) page, download the eggp binary corresponding to your OS and rename it to `symregg`.
-
-Note: Windows and OSX releases are untested, for Windows Mingw with libnlopt are required.
-
-### Method 3: cabal
+### Method 2: cabal
 
 After installing the dependencies (e.g., `apt install libz libnlopt libgmp`), install [`ghcup`](https://www.haskell.org/ghcup/#)
 

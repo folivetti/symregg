@@ -5,6 +5,7 @@ from typing import Iterator, List
 from io import StringIO
 import tempfile
 import csv
+import os
 
 import numpy as np
 import pandas as pd
@@ -20,7 +21,7 @@ from ._binding import (
     unsafe_hs_symregg_exit,
 )
 
-VERSION: str = "1.0.3"
+VERSION: str = "1.0.4"
 
 
 _hs_rts_init: bool = False
@@ -54,9 +55,9 @@ def main(args: List[str] = []) -> int:
     with hs_rts_init(args):
         return unsafe_hs_symregg_main()
 
-def symregg_run(dataset: str, gen: int, alg: str, maxSize: int, nonterminals: str, loss: str, optIter: int, optRepeat: int, nParams: int, folds: int, trace : int, dumpTo: str, loadFrom: str) -> str:
+def symregg_run(dataset: str, gen: int, alg: str, maxSize: int, nonterminals: str, loss: str, optIter: int, optRepeat: int, nParams: int, folds: int, trace : int, simplify : int, dumpTo: str, loadFrom: str) -> str:
     with hs_rts_init():
-        return unsafe_hs_symregg_run(dataset, gen, alg, maxSize, nonterminals, loss, optIter, optRepeat, nParams, folds, trace, dumpTo, loadFrom)
+        return unsafe_hs_symregg_run(dataset, gen, alg, maxSize, nonterminals, loss, optIter, optRepeat, nParams, folds, trace, simplify, dumpTo, loadFrom)
 
 class SymRegg(BaseEstimator, RegressorMixin):
     """ Builds a symbolic regression model using symregg.
@@ -117,6 +118,9 @@ class SymRegg(BaseEstimator, RegressorMixin):
         If set to n>1, it will use 1/n for calculating the fitness function
         and the reminder for fitting the parameter.
 
+    simplify : bool, default=False
+        Whether to apply a final step of equality saturation to simplify the expressions.
+
     trace : bool, default=False
         Whether to return a pandas dataframe of all visited expressions.
 
@@ -137,7 +141,7 @@ class SymRegg(BaseEstimator, RegressorMixin):
     >>> estimator = SymRegg()
     >>> estimator.fit(X, y)
     """
-    def __init__(self, gen = 100, alg = "BestFirst", maxSize = 15, nonterminals = "add,sub,mul,div", loss = "MSE", optIter = 50, optRepeat = 2, nParams = -1, folds = 1, trace = False, dumpTo = "", loadFrom = ""):
+    def __init__(self, gen = 100, alg = "BestFirst", maxSize = 15, nonterminals = "add,sub,mul,div", loss = "MSE", optIter = 50, optRepeat = 2, nParams = -1, folds = 1, simplify = False, trace = False, dumpTo = "", loadFrom = ""):
         nts = "add,sub,mul,div,power,powerabs,\
                aq,abs,sin,cos,tan,sinh,cosh,tanh,\
                asin,acos,atan,asinh,acosh,atanh,sqrt,\
@@ -173,6 +177,7 @@ class SymRegg(BaseEstimator, RegressorMixin):
         self.dumpTo = dumpTo
         self.loadFrom = loadFrom
         self.is_fitted_ = False
+        self.simplify = simplify
         self.trace = int(trace)
 
     def combine_dataset(self, X, y, Xerr, yerr):
@@ -191,6 +196,15 @@ class SymRegg(BaseEstimator, RegressorMixin):
 
         Returns the combined dataset
         '''
+        if isinstance(X, pd.DataFrame):
+            X = X.to_numpy()
+        if isinstance(y, pd.DataFrame):
+            y = y.to_numpy()
+        if isinstance(Xerr, pd.DataFrame):
+            Xerr = Xerr.to_numpy()
+        if isinstance(yerr, pd.DataFrame):
+            yerr = yerr.to_numpy()
+
         if X.ndim == 1:
             X = X.reshape(-1,1)
         y = y.reshape(-1, 1)
@@ -242,17 +256,21 @@ class SymRegg(BaseEstimator, RegressorMixin):
         combined = self.combine_dataset(X, y, Xerr, yerr)
         header = self.get_header(X.shape[1])
 
-        with tempfile.NamedTemporaryFile(mode='w+', newline='', delete=False, suffix='.csv') as temp_file:
+        with tempfile.NamedTemporaryFile(mode='w+', newline='', delete=False, prefix='datatemp_', suffix='.csv', dir=os.getcwd()) as temp_file:
             writer = csv.writer(temp_file)
             writer.writerow(header)
             writer.writerows(combined)
             dataset = temp_file.name
         dname = self.get_fname(dataset, header)
-        csv_data = symregg_run(dname, self.gen, self.alg, self.maxSize, self.nonterminals, self.loss, self.optIter, self.optRepeat, self.nParams, self.folds, self.trace, self.dumpTo, self.loadFrom)
+
+        try:
+            csv_data = symregg_run(dname, self.gen, self.alg, self.maxSize, self.nonterminals, self.loss, self.optIter, self.optRepeat, self.nParams, self.folds, self.trace, self.simplify, self.dumpTo, self.loadFrom)
+        finally:
+            os.remove(dataset)
 
         if len(csv_data) > 0:
             csv_io = StringIO(csv_data.strip())
-            self.results = pd.read_csv(csv_io, header=0, dtype={'theta':str})
+            self.results = pd.read_csv(csv_io, header=0, converters={'theta':str})
             self.is_fitted_ = True
         return self
 
@@ -274,18 +292,24 @@ class SymRegg(BaseEstimator, RegressorMixin):
         combineds = [self.combine_dataset(X, y, Xerr, yerr) for X, y, Xerr, yerr in zip(Xs, ys, Xerrs, yerrs)]
         header = self.get_header(Xs[0].shape[1])
         datasets = []
+        datasetsNames = []
 
         for combined in combineds:
-            with tempfile.NamedTemporaryFile(mode='w+', newline='', delete=False, suffix='.csv') as temp_file:
+            with tempfile.NamedTemporaryFile(mode='w+', newline='', delete=False, prefix='datatemp_', suffix='.csv', dir=os.getcwd()) as temp_file:
                 writer = csv.writer(temp_file)
                 writer.writerow(header)
                 writer.writerows(combined)
+                datasetsNames.append(temp_file.name)
                 datasets.append(self.get_fname(temp_file.name, header))
 
-        csv_data = symregg_run(" ".join(datasets), self.gen, self.alg, self.maxSize, self.nonterminals, self.loss, self.optIter, self.optRepeat, self.nParams, self.folds, self.trace, self.dumpTo, self.loadFrom)
+        try:
+            csv_data = symregg_run(" ".join(datasets), self.gen, self.alg, self.maxSize, self.nonterminals, self.loss, self.optIter, self.optRepeat, self.nParams, self.folds, self.trace, self.simplify, self.dumpTo, self.loadFrom)
+        finally:
+            for dataset in datasetsNames:
+                os.remove(dataset)
         if len(csv_data) > 0:
             csv_io = StringIO(csv_data.strip())
-            self.results = pd.read_csv(csv_io, header=0, dtype={'theta':str})
+            self.results = pd.read_csv(csv_io, header=0, converters={'theta':str})
             self.is_fitted_ = True
         return self
 
@@ -327,9 +351,12 @@ class SymRegg(BaseEstimator, RegressorMixin):
         return self.evaluate_best_model_view(X, view)
 
     def evaluate_best_model(self, x):
+        if isinstance(x, pd.DataFrame):
+            x = x.to_numpy()
         if x.ndim == 1:
             x = x.reshape(-1,1)
-        t = np.array(list(map(float, self.results.iloc[-1].theta.split(";"))))
+        tStr = self.results.iloc[-1].theta.split(";")
+        t = np.array(list(map(float, tStr))) if len(tStr[0]) > 0  else np.array([])
         y = eval(self.results.iloc[-1].Numpy)
         if self.loss == "Bernoulli":
             return 1/(1 + np.exp(-y))
@@ -337,11 +364,13 @@ class SymRegg(BaseEstimator, RegressorMixin):
             return np.exp(y)
         return y
     def evaluate_best_model_view(self, x, view):
+        if isinstance(x, pd.DataFrame):
+            x = x.to_numpy()
         if x.ndim == 1:
             x = x.reshape(-1,1)
         ix = self.results.iloc[-1].id
         best = self.results[self.results.id==ix].iloc[view]
-        t = np.array(list(map(float, best.theta.split(";"))))
+        t = np.array(list(map(float, best.theta.split(";")))) if len(best.theta) > 0 else np.array([])
         y = eval(best.Numpy)
         if self.loss == "Bernoulli":
             return 1/(1 + np.exp(-y))
@@ -350,10 +379,12 @@ class SymRegg(BaseEstimator, RegressorMixin):
         return y
 
     def evaluate_model_view(self, x, ix, view):
+        if isinstance(x, pd.DataFrame):
+            x = x.to_numpy()
         if x.ndim == 1:
             x = x.reshape(-1,1)
         best = self.results[self.results.id==ix].iloc[view]
-        t = np.array(list(map(float, best.theta.split(";"))))
+        t = np.array(list(map(float, best.theta.split(";")))) if len(best.theta) > 0 else np.array([])
         y = eval(best.Numpy)
         if self.loss == "Bernoulli":
             return 1/(1 + np.exp(-y))
@@ -361,9 +392,12 @@ class SymRegg(BaseEstimator, RegressorMixin):
             return np.exp(y)
         return y
     def evaluate_model(self, ix, x):
+        if isinstance(x, pd.DataFrame):
+            x = x.to_numpy()
         if x.ndim == 1:
             x = x.reshape(-1,1)
-        t = np.array(list(map(float, self.results.iloc[ix].theta.split(";"))))
+        tStr = self.results.iloc[ix].theta.split(";")
+        t = np.array(list(map(float, tStr))) if len(tStr[0]) > 0 else np.array([])
         y = eval(self.results.iloc[ix].Numpy)
         if self.loss == "Bernoulli":
             return 1/(1 + np.exp(-y))
@@ -373,6 +407,8 @@ class SymRegg(BaseEstimator, RegressorMixin):
     def score(self, X, y):
         ''' Calculates the score (single-view only).
         '''
+        if isinstance(y, pd.DataFrame):
+            y = y.to_numpy()
         ypred = self.evaluate_best_model(X)
         return r2_score(y, ypred)
     def get_model(self, idx):

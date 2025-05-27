@@ -16,7 +16,6 @@ import Data.Maybe ( fromJust, isNothing )
 import Data.SRTree
 import Data.SRTree.Print ( showExpr, showPython )
 import Options.Applicative as Opt hiding (Const)
-import Random
 import System.Random
 import Data.List ( intercalate, zip4 )
 import qualified Data.IntSet as IntSet
@@ -28,7 +27,12 @@ import qualified Data.HashSet as Set
 import Control.Lens (over)
 import qualified Data.Map.Strict as Map
 
-import Util
+--import Algorithm.EqSat.SearchSR
+import Data.SRTree.Random
+import Data.SRTree.Datasets
+import Text.ParseSR
+
+import Algorithm.EqSat.SearchSR
 
 data Alg = OnlyRandom | BestFirst deriving (Show, Read, Eq)
 
@@ -40,6 +44,7 @@ data Args = Args
     _maxSize      :: Int,
     _split        :: Int,
     _trace        :: Bool,
+    _simplify     :: Bool,
     _distribution :: Distribution,
     _optIter      :: Int,
     _optRepeat    :: Int,
@@ -50,10 +55,13 @@ data Args = Args
   }
   deriving (Show)
 
+csvHeader :: String
+csvHeader = "id,view,Expression,Numpy,theta,size,loss_train,loss_val,loss_test,maxloss,R2_train,R2_val,R2_test,mdl_train,mdl_val,mdl_test"
+
 egraphSearch :: [(DataSet, DataSet)] -> [DataSet] -> Args -> StateT EGraph (StateT StdGen IO) String
 egraphSearch dataTrainVals dataTests args = do
   if null (_loadFrom args)
-    then do ecFst <- insertRndExpr (_maxSize args) rndTerm rndNonTerm2
+    then do ecFst <- insertRndExpr (_maxSize args) rndTerm rndNonTerm
             updateIfNothing fitFun ecFst
             insertTerms
             evaluateUnevaluated fitFun
@@ -77,10 +85,10 @@ egraphSearch dataTrainVals dataTests args = do
                     OnlyRandom -> do let ratio = fromIntegral nEvs / fromIntegral nCls
                                      b <- rnd (tossBiased ratio)
                                      ec <- if b && ratio > 0.99
-                                              then insertRndExpr (_maxSize args) rndTerm rndNonTerm2 >>= canonical
+                                              then insertRndExpr (_maxSize args) rndTerm rndNonTerm >>= canonical
                                               else do mEc <- pickRndSubTree
                                                       case mEc of
-                                                           Nothing ->insertRndExpr (_maxSize args) rndTerm rndNonTerm2 >>= canonical
+                                                           Nothing ->insertRndExpr (_maxSize args) rndTerm rndNonTerm >>= canonical
                                                            Just ec' -> pure ec'
                                      pure ec
                     BestFirst  -> do
@@ -97,7 +105,7 @@ egraphSearch dataTrainVals dataTests args = do
                                   then pure ecBest
                                   else do ee <- pickRndSubTree
                                           case ee of
-                                            Nothing -> insertRndExpr (_maxSize args) rndTerm rndNonTerm2 >>= canonical
+                                            Nothing -> insertRndExpr (_maxSize args) rndTerm rndNonTerm >>= canonical
                                             Just c  -> pure c
 
        -- when upd $
@@ -119,9 +127,10 @@ egraphSearch dataTrainVals dataTests args = do
   pure $ unlines (csvHeader : concat pf)
 
   where
-    maxSize = _maxSize args
+    maxSize        = _maxSize args
     relabel        = if (_nParams args == -1) then relabelParams else relabelParamsOrder
     shouldReparam  = _nParams args == -1
+
     fitFun :: Fix SRTree -> StateT EGraph (StateT StdGen IO) (Double, [PVector])
     fitFun = fitnessMV shouldReparam (_optRepeat args) (_optIter args) (_distribution args) dataTrainVals
 
@@ -140,45 +149,7 @@ egraphSearch dataTrainVals dataTests args = do
          then crossover p1 p2 >>= canonical
          else mutate p1 >>= canonical
 
-    combineFrom' [] = pure 0 -- this is the first terminal and it will always be already evaluated
-    combineFrom' ecs = do
-        nt  <- rnd rndNonTerm
-        p1  <- rnd (randomFrom ecs)
-        p2  <- rnd (randomFrom ecs)
-        l1  <- rnd (randomFrom [2..(_maxSize args)-2]) -- sz 10: [2..8]
-
-        e1  <- randomChildFrom p1 l1 >>= canonical
-        ml  <- gets (_size . _info . (IM.! e1) . _eClass)
-        l2  <- rnd (randomFrom [1..((_maxSize args) - ml - 1)]) -- maxSize - maxSize + 2 - 2= 0 -- sz 10: [1..7] (2) / [1..1] (8)
-        e2  <- randomChildFrom p2 l2 >>= canonical
-        case nt of
-          Uni Id ()    -> canonical e1
-          Uni f ()     -> add myCost (Uni f e1) >>= canonical
-          Bin op () () -> do b <- rnd toss
-                             if b
-                              then add myCost (Bin op e1 e2) >>= canonical
-                              else add myCost (Bin op e2 e1) >>= canonical
-          _            -> canonical e1 -- it is a terminal, should it happen?
-
-    randomChildFrom ec' maxL = do
-      p <- rnd toss -- whether to go deeper or return this level
-      ec <- canonical ec'
-      l <- gets (_size . _info . (IM.! ec) . _eClass )
-
-      if p || l > maxL
-          then do --enodes <- gets (_eNodes . (IM.! ec) . _eClass)
-                  enode  <- gets (_best . _info . (IM.! ec) . _eClass) -- we should return the best otherwise we may build larger exprs
-                  case enode of
-                      Uni _ eci     -> randomChildFrom eci maxL
-                      Bin _ ecl ecr -> do coin <- rnd toss
-                                          if coin
-                                            then randomChildFrom ecl maxL
-                                            else randomChildFrom ecr maxL
-                      _ -> pure ec -- this shouldn't happen unless maxL==0
-          else pure ec
-
     nonTerms   = parseNonTerms (_nonterminals args)
-    --[ Bin Add () (), Bin Sub () (), Bin Mul () (), Bin Div () (), Bin PowerAbs () (),  Uni Recip ()]
     (Sz2 _ nFeats) = MA.size (getX . fst . head $ dataTrainVals)
     terms          = if _distribution args == ROXY
                           then [var 0, param 0]
@@ -186,13 +157,12 @@ egraphSearch dataTrainVals dataTests args = do
                                <> if _nParams args == -1
                                      then [param 0]
                                      else Prelude.map param [0 .. _nParams args - 1]
-    rndTerm    = Random.randomFrom terms
-    rndNonTerm = Random.randomFrom nonTerms
-    rndNonTerm2 = Random.randomFrom nonTerms
+    rndTerm    = randomFrom terms
+    rndNonTerm = randomFrom nonTerms
     uniNonTerms = Prelude.filter isUni nonTerms
     binNonTerms = Prelude.filter isBin nonTerms
-    isUni (Uni _ _) = True
-    isUni _         = False
+    isUni (Uni _ _)   = True
+    isUni _           = False
     isBin (Bin _ _ _) = True
     isBin _           = False
 
@@ -203,7 +173,7 @@ egraphSearch dataTrainVals dataTests args = do
     printExpr :: Int -> EClassId -> RndEGraph [String]
     printExpr ix ec = do
         thetas' <- gets (_theta . _info . (IM.! ec) . _eClass)
-        bestExpr <- getBestExpr ec
+        bestExpr <- (if _simplify args then simplifyEqSatDefault else id) <$> getBestExpr ec
 
         let best'   = if shouldReparam then relabelParams bestExpr else relabelParamsOrder bestExpr
             nParams = countParamsUniq best'
@@ -347,24 +317,5 @@ egraphSearch dataTrainVals dataTests args = do
                                         r' <- getBestExpr r
                                         pure . Fix $ Bin op l' r'
 
-    checkToken parent en' = do  en <- canonize en'
-                                mEc <- gets ((Map.!? en) . _eNodeToEClass)
-                                case mEc of
-                                    Nothing -> pure True
-                                    Just ec -> do ec' <- canonical ec
-                                                  ec'' <- canonize (parent ec')
-                                                  not <$> doesExist ec''
-    doesExist, doesNotExist :: ENode -> RndEGraph Bool
-    doesExist en = gets ((Map.member en) . _eNodeToEClass)
-    doesNotExist en = gets ((Map.notMember en) . _eNodeToEClass)
 
-    doesNotExistGens :: [Maybe (EClassId -> ENode)] -> ENode -> RndEGraph Bool
-    doesNotExistGens []              en = gets ((Map.notMember en) . _eNodeToEClass)
-    doesNotExistGens (mGrand:grands) en = do  b <- gets ((Map.notMember en) . _eNodeToEClass)
-                                              if b
-                                                then pure True
-                                                else case mGrand of
-                                                    Nothing -> pure False
-                                                    Just gf -> do ec  <- gets ((Map.! en) . _eNodeToEClass)
-                                                                  en' <- canonize (gf ec)
-                                                                  doesNotExistGens grands en'
+

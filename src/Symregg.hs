@@ -23,7 +23,6 @@ import Data.Maybe ( fromJust, isNothing )
 import Data.SRTree
 import Data.SRTree.Print ( showExpr, showPython )
 import Options.Applicative as Opt hiding (Const)
-import Random
 import System.Random
 import Data.List ( intercalate )
 import qualified Data.IntSet as IntSet
@@ -37,7 +36,9 @@ import qualified Data.Map.Strict as Map
 
 
 import Search
-import Util
+import Algorithm.EqSat.SearchSR
+import Data.SRTree.Random
+import Data.SRTree.Datasets
 
 import Foreign.C (CInt (..), CDouble (..))
 import Foreign.C.String (CString, newCString, withCString, peekCString, peekCAString, newCAString)
@@ -99,21 +100,22 @@ hs_symregg_main =
            <> header "SymRegg - symbolic regression with e-graphs."
             )
 
-foreign export ccall hs_symregg_run :: CString -> CInt -> CString -> CInt -> CString -> CString -> CInt -> CInt -> CInt -> CInt -> CInt -> CString -> CString -> IO CString
+foreign export ccall hs_symregg_run :: CString -> CInt -> CString -> CInt -> CString -> CString -> CInt -> CInt -> CInt -> CInt -> CInt -> CInt -> CString -> CString -> IO CString
 
-hs_symregg_run :: CString -> CInt -> CString -> CInt -> CString -> CString -> CInt -> CInt -> CInt -> CInt -> CInt -> CString -> CString -> IO CString
-hs_symregg_run dataset gens alg maxSize nonterminals loss optIter optRepeat nParams folds trace dumpTo loadFrom = do
+hs_symregg_run :: CString -> CInt -> CString -> CInt -> CString -> CString -> CInt -> CInt -> CInt -> CInt -> CInt -> CInt -> CString -> CString -> IO CString
+hs_symregg_run dataset gens alg maxSize nonterminals loss optIter optRepeat nParams folds trace simplify dumpTo loadFrom = do
   dataset' <- peekCString dataset
   nonterminals' <- peekCString nonterminals
   alg' <- peekCString alg
   loss' <- peekCString loss
   dumpTo' <- peekCString dumpTo
   loadFrom' <- peekCString loadFrom
-  out  <- symregg_run dataset' (fromIntegral gens) alg' (fromIntegral maxSize) nonterminals' loss' (fromIntegral optIter) (fromIntegral optRepeat) (fromIntegral nParams) (fromIntegral folds) (fromIntegral trace /= 0) dumpTo' loadFrom'
+  out  <- symregg_run dataset' (fromIntegral gens) alg' (fromIntegral maxSize) nonterminals' loss' (fromIntegral optIter) (fromIntegral optRepeat) (fromIntegral nParams) (fromIntegral folds) (fromIntegral trace /= 0) (fromIntegral simplify /= 0) dumpTo' loadFrom'
   newCString out
 
 
-
+csvHeader :: String
+csvHeader = "id,view,Expression,Numpy,theta,size,loss_train,loss_val,loss_test,maxloss,R2_train,R2_val,R2_test,mdl_train,mdl_val,mdl_test"
 
 opt :: Parser Args
 opt = Args
@@ -153,6 +155,9 @@ opt = Args
   <*> switch
        ( long "trace"
        <> help "print all evaluated expressions.")
+  <*> switch
+      ( long "Simplify"
+      <> help "simplify the expressions before printing.")
   <*> option auto
        ( long "loss"
        <> value MSE
@@ -192,13 +197,13 @@ opt = Args
        <> help "load initial e-graph from a file."
        )
 
-symregg_run :: String -> Int -> String -> Int -> String -> String -> Int -> Int -> Int -> Int -> Bool -> String -> String -> IO String
-symregg_run dataset gens alg maxSize nonterminals loss optIter optRepeat nParams folds trace dumpTo loadFrom =
+symregg_run :: String -> Int -> String -> Int -> String -> String -> Int -> Int -> Int -> Int -> Bool -> Bool -> String -> String -> IO String
+symregg_run dataset gens alg maxSize nonterminals loss optIter optRepeat nParams folds trace simplify dumpTo loadFrom =
   case readMaybe alg of
        Nothing -> pure $ "Invalid algorithm " <> alg
        Just a  -> case readMaybe loss of
                        Nothing -> pure $ "Invalid loss function " <> loss
-                       Just l  -> let arg = Args dataset "" gens a maxSize folds trace l optIter optRepeat nParams nonterminals dumpTo loadFrom
+                       Just l  -> let arg = Args dataset "" gens a maxSize folds trace simplify l optIter optRepeat nParams nonterminals dumpTo loadFrom
                                   in symregg arg
 
 symregg :: Args -> IO String
