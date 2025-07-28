@@ -128,7 +128,7 @@ pip install pysymregg
 ### Basic Example
 
 ```python
-from pysymregg import PySymRegg
+from symregg import SymRegg
 import numpy as np
 
 # Create sample data
@@ -136,7 +136,7 @@ X = np.linspace(-10, 10, 100).reshape(-1, 1)
 y = 2 * X.ravel() + 3 * np.sin(X.ravel()) + np.random.normal(0, 1, 100)
 
 # Create and fit the model
-model = PySymRegg(gen=100, nonterminals="add,sub,mul,div,sin,cos")
+model = SymRegg(gen=100, nonterminals="add,sub,mul,div,sin,cos")
 model.fit(X, y)
 
 # Make predictions
