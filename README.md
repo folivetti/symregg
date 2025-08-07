@@ -128,7 +128,7 @@ pip install pysymregg
 ### Basic Example
 
 ```python
-from pysymregg import PySymRegg
+from symregg import SymRegg
 import numpy as np
 
 # Create sample data
@@ -136,7 +136,7 @@ X = np.linspace(-10, 10, 100).reshape(-1, 1)
 y = 2 * X.ravel() + 3 * np.sin(X.ravel()) + np.random.normal(0, 1, 100)
 
 # Create and fit the model
-model = PySymRegg(gen=100, nonterminals="add,sub,mul,div,sin,cos")
+model = SymRegg(gen=100, nonterminals="add,sub,mul,div,sin,cos")
 model.fit(X, y)
 
 # Make predictions
@@ -217,18 +217,27 @@ After fitting, the `results` attribute contains a pandas DataFrame with details 
 
 ## License
 
-[LICENSE]
+[LICENSE](LICENSE)
 
 ## Citation
 
-If you use PySymRegg in your research, please cite:
-
-TBD
+If you use symregg in your research, please cite https://arxiv.org/abs/2501.17848:
+```bibtex
+@inbook{10.1145/3712256.3726383,
+    author = {de Fran\c{c}a, Fabricio Olivetti and Kronberger, Gabriel},
+    title = {Improving Genetic Programming for Symbolic Regression with Equality Graphs},
+    year = {2025},
+    publisher = {Association for Computing Machinery},
+    booktitle = {Proceedings of the Genetic and Evolutionary Computation Conference},
+    pages = {989–998},
+    numpages = {10}
+}
+```
 
 ## Acknowledgments
 
 The bindings were created following the amazing example written by [wenkokke](https://github.com/wenkokke/example-haskell-wheel)
 
-Fabricio Olivetti de Franca is supported by Conselho Nacional de Desenvolvimento Cient\'{i}fico e Tecnol\'{o}gico (CNPq) grant 301596/2022-0.
+Fabricio Olivetti de Franca is supported by Conselho Nacional de Desenvolvimento Científico e Tecnológico (CNPq) grant 301596/2022-0.
 
 Gabriel Kronberger is supported by the Austrian Federal Ministry for Climate Action, Environment, Energy, Mobility, Innovation and Technology, the Federal Ministry for Labour and Economy, and the regional government of Upper Austria within the COMET project ProMetHeus (904919) supported by the Austrian Research Promotion Agency (FFG). 
