@@ -12,6 +12,7 @@ import pandas as pd
 from sklearn.base import BaseEstimator, RegressorMixin
 from sklearn.utils.validation import check_X_y, check_array, check_is_fitted
 from sklearn.metrics import mean_squared_error, r2_score
+import matplotlib.pyplot as plt
 
 from ._binding import (
     unsafe_hs_symregg_version,
@@ -21,7 +22,7 @@ from ._binding import (
     unsafe_hs_symregg_exit,
 )
 
-VERSION: str = "1.0.4"
+VERSION: str = "1.0.5"
 
 
 _hs_rts_init: bool = False
@@ -55,9 +56,9 @@ def main(args: List[str] = []) -> int:
     with hs_rts_init(args):
         return unsafe_hs_symregg_main()
 
-def symregg_run(dataset: str, gen: int, alg: str, maxSize: int, nonterminals: str, loss: str, optIter: int, optRepeat: int, nParams: int, folds: int, trace : int, simplify : int, dumpTo: str, loadFrom: str) -> str:
+def symregg_run(dataset: str, gen: int, alg: str, maxSize: int, nonterminals: str, loss: str, optIter: int, optRepeat: int, nParams: int, split: int, max_time : int, trace : int, simplify : int, dumpTo: str, loadFrom: str, varnames: str) -> str:
     with hs_rts_init():
-        return unsafe_hs_symregg_run(dataset, gen, alg, maxSize, nonterminals, loss, optIter, optRepeat, nParams, folds, trace, simplify, dumpTo, loadFrom)
+        return unsafe_hs_symregg_run(dataset, gen, alg, maxSize, nonterminals, loss, optIter, optRepeat, nParams, split, max_time, trace, simplify, dumpTo, loadFrom, varnames)
 
 class SymRegg(BaseEstimator, RegressorMixin):
     """ Builds a symbolic regression model using symregg.
@@ -141,7 +142,7 @@ class SymRegg(BaseEstimator, RegressorMixin):
     >>> estimator = SymRegg()
     >>> estimator.fit(X, y)
     """
-    def __init__(self, gen = 100, alg = "BestFirst", maxSize = 15, nonterminals = "add,sub,mul,div", loss = "MSE", optIter = 50, optRepeat = 2, nParams = -1, folds = 1, simplify = False, trace = False, dumpTo = "", loadFrom = ""):
+    def __init__(self, gen = 100, alg = "BestFirst", maxSize = 15, nonterminals = "add,sub,mul,div", loss = "MSE", optIter = 50, optRepeat = 2, nParams = -1, folds = 1, max_time = -1, simplify = False, trace = False, dumpTo = "", loadFrom = ""):
         nts = "add,sub,mul,div,power,powerabs,\
                aq,abs,sin,cos,tan,sinh,cosh,tanh,\
                asin,acos,atan,asinh,acosh,atanh,sqrt,\
@@ -165,6 +166,8 @@ class SymRegg(BaseEstimator, RegressorMixin):
             raise ValueError('nParams must be either -1 or a positive number')
         if folds < 1:
             raise ValueError('folds must be equal or greater than 1')
+        if not isinstance(max_time, int):
+            raise TypeError('max_time must be an integer')
         self.gen = gen
         self.alg = alg
         self.maxSize = maxSize
@@ -174,6 +177,7 @@ class SymRegg(BaseEstimator, RegressorMixin):
         self.optRepeat = optRepeat
         self.nParams = nParams
         self.folds = folds
+        self.max_time = max_time
         self.dumpTo = dumpTo
         self.loadFrom = loadFrom
         self.is_fitted_ = False
@@ -198,7 +202,7 @@ class SymRegg(BaseEstimator, RegressorMixin):
         '''
         if isinstance(X, pd.DataFrame):
             X = X.to_numpy()
-        if isinstance(y, pd.DataFrame):
+        if isinstance(y, pd.DataFrame) or isinstance(y, pd.Series):
             y = y.to_numpy()
         if isinstance(Xerr, pd.DataFrame):
             Xerr = Xerr.to_numpy()
@@ -255,6 +259,10 @@ class SymRegg(BaseEstimator, RegressorMixin):
         '''
         combined = self.combine_dataset(X, y, Xerr, yerr)
         header = self.get_header(X.shape[1])
+        if isinstance(X, pd.DataFrame):
+            varnames = ",".join(X.columns)
+        else:
+            varnames = ""
 
         with tempfile.NamedTemporaryFile(mode='w+', newline='', delete=False, prefix='datatemp_', suffix='.csv', dir=os.getcwd()) as temp_file:
             writer = csv.writer(temp_file)
@@ -264,7 +272,7 @@ class SymRegg(BaseEstimator, RegressorMixin):
         dname = self.get_fname(dataset, header)
 
         try:
-            csv_data = symregg_run(dname, self.gen, self.alg, self.maxSize, self.nonterminals, self.loss, self.optIter, self.optRepeat, self.nParams, self.folds, self.trace, self.simplify, self.dumpTo, self.loadFrom)
+            csv_data = symregg_run(dname, self.gen, self.alg, self.maxSize, self.nonterminals, self.loss, self.optIter, self.optRepeat, self.nParams, self.folds, self.max_time, self.trace, self.simplify, self.dumpTo, self.loadFrom, varnames)
         finally:
             os.remove(dataset)
 
@@ -293,6 +301,10 @@ class SymRegg(BaseEstimator, RegressorMixin):
         header = self.get_header(Xs[0].shape[1])
         datasets = []
         datasetsNames = []
+        if isinstance(Xs[0], pd.DataFrame):
+            varnames = ",".join(Xs[0].columns)
+        else:
+            varnames = ""
 
         for combined in combineds:
             with tempfile.NamedTemporaryFile(mode='w+', newline='', delete=False, prefix='datatemp_', suffix='.csv', dir=os.getcwd()) as temp_file:
@@ -303,7 +315,7 @@ class SymRegg(BaseEstimator, RegressorMixin):
                 datasets.append(self.get_fname(temp_file.name, header))
 
         try:
-            csv_data = symregg_run(" ".join(datasets), self.gen, self.alg, self.maxSize, self.nonterminals, self.loss, self.optIter, self.optRepeat, self.nParams, self.folds, self.trace, self.simplify, self.dumpTo, self.loadFrom)
+            csv_data = symregg_run(" ".join(datasets), self.gen, self.alg, self.maxSize, self.nonterminals, self.loss, self.optIter, self.optRepeat, self.nParams, self.folds, self.max_time, self.trace, self.simplify, self.dumpTo, self.loadFrom, varnames)
         finally:
             for dataset in datasetsNames:
                 os.remove(dataset)
@@ -428,3 +440,14 @@ class SymRegg(BaseEstimator, RegressorMixin):
             visual_expression = visual_expression.replace(f'x[:, {i}]', f'X{i}')
 
         return model, visual_expression
+    def cal_plot(self, X, y, ix):
+        yhat = self.evaluate_model(ix, X)
+        y_lo = y.min() - 0.1*(y.max() - y.min())
+        y_hi = y.max() + 0.1*(y.max() - y.min())
+        rng  = np.arange(y_lo, y_hi, 0.01)
+        plt.plot(rng, rng)
+        plt.plot(yhat, y, '.')
+        plt.xlabel(r"$\hat{y}$")
+        plt.ylabel(r"$y$")
+        plt.ylim(y_lo, y_hi)
+        plt.xlim(y_lo, y_hi)

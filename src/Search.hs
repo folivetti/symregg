@@ -14,7 +14,7 @@ import qualified Data.IntMap.Strict as IM
 import Data.Massiv.Array as MA hiding (forM_, forM)
 import Data.Maybe ( fromJust, isNothing )
 import Data.SRTree
-import Data.SRTree.Print ( showExpr, showPython )
+import Data.SRTree.Print ( showExpr, showExprWithVars, showPython, showLatex, showLatexWithVars )
 import Options.Applicative as Opt hiding (Const)
 import System.Random
 import Data.List ( intercalate, zip4 )
@@ -31,6 +31,8 @@ import qualified Data.Map.Strict as Map
 import Data.SRTree.Random
 import Data.SRTree.Datasets
 import Text.ParseSR
+import Data.List.Split (splitOn)
+import Data.Time.Clock.POSIX
 
 import Algorithm.EqSat.SearchSR
 
@@ -51,12 +53,14 @@ data Args = Args
     _nParams      :: Int,
     _nonterminals :: String,
     _dumpTo       :: String,
-    _loadFrom     :: String
+    _loadFrom     :: String,
+    _maxtime      :: Int,
+    _varnames     :: String
   }
   deriving (Show)
 
 csvHeader :: String
-csvHeader = "id,view,Expression,Numpy,theta,size,loss_train,loss_val,loss_test,maxloss,R2_train,R2_val,R2_test,mdl_train,mdl_val,mdl_test"
+csvHeader = "id,view,Expression,Numpy,Math,theta,size,loss_train,loss_val,loss_test,maxloss,R2_train,R2_val,R2_test,mdl_train,mdl_val,mdl_test"
 
 egraphSearch :: [(DataSet, DataSet)] -> [DataSet] -> Args -> StateT EGraph (StateT StdGen IO) String
 egraphSearch dataTrainVals dataTests args = do
@@ -76,9 +80,15 @@ egraphSearch dataTrainVals dataTests args = do
             then forM (Prelude.zip [0..] allEcs) $ uncurry printExpr
             else pure []
 
+  t0' <- io $ getPOSIXTime
+  let stopCriteria (_, nEvs, maxT, t0) =
+        case maxT of
+          Nothing -> nEvs < _gens args
+          Just mT -> nEvs < _gens args && mT > 0
 
-  (outputs,_) <- while ((<(_gens args)) . snd) (eqs, nEvs) $
-    \(output, nEvs) ->
+
+  (outputs,_,_,_) <- while stopCriteria (eqs, nEvs, maxT, t0') $
+    \(output, nEvs, maxT, t0) ->
       do
        nCls  <- gets (IM.size . _eClass)
        ecN <- case (_alg args) of
@@ -118,7 +128,10 @@ egraphSearch dataTrainVals dataTests args = do
                      else pure output
 
        let nEvs'    = nEvs + if upd then 1 else 0
-       pure (output', nEvs')
+       t1 <- io $ getPOSIXTime
+       let delta = t1 - t0
+           maxT' = (subtract delta) <$> maxT
+       pure (output', nEvs', maxT', t1)
 
   when ((not.null) (_dumpTo args)) $ get >>= (io . BS.writeFile (_dumpTo args) . encode )
   pf <- if _trace args
@@ -127,6 +140,7 @@ egraphSearch dataTrainVals dataTests args = do
   pure $ unlines (csvHeader : concat pf)
 
   where
+    maxT           = if _maxtime args < 0 then Nothing else Just (fromIntegral $ _maxtime args - 5)
     maxSize        = _maxSize args
     relabel        = if (_nParams args == -1) then relabelParams else relabelParamsOrder
     shouldReparam  = _nParams args == -1
@@ -206,7 +220,11 @@ egraphSearch dataTrainVals dataTests args = do
                                                 , r2_train, r2_val, r2_te
                                                 , mdl_train, mdl_val, mdl_te]
                 thetaStr   = intercalate ";" $ Prelude.map show (MA.toList theta)
-            pure $ show ix <> "," <> show view <> "," <> showExpr expr <> "," <> "\"" <> showPython best' <> "\","
+                varnames    = _varnames args
+                showExprFun = if null varnames then showExpr else showExprWithVars (splitOn "," varnames)
+                showLatexFun = if null varnames then showLatex else showLatexWithVars (splitOn "," varnames)
+            pure $ show ix <> "," <> show view <> "," <> showExprFun expr <> "," <> "\"" <> showPython best' <> "\","
+                           <> "\"$$" <> showLatexFun best' <> "$$\","
                            <> thetaStr <> "," <> show (countNodes $ convertProtectedOps expr)
                            <> "," <> vals
         pure ts

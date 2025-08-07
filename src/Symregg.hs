@@ -100,22 +100,23 @@ hs_symregg_main =
            <> header "SymRegg - symbolic regression with e-graphs."
             )
 
-foreign export ccall hs_symregg_run :: CString -> CInt -> CString -> CInt -> CString -> CString -> CInt -> CInt -> CInt -> CInt -> CInt -> CInt -> CString -> CString -> IO CString
+foreign export ccall hs_symregg_run :: CString -> CInt -> CString -> CInt -> CString -> CString -> CInt -> CInt -> CInt -> CInt -> CInt -> CInt -> CInt -> CString -> CString -> CString -> IO CString
 
-hs_symregg_run :: CString -> CInt -> CString -> CInt -> CString -> CString -> CInt -> CInt -> CInt -> CInt -> CInt -> CInt -> CString -> CString -> IO CString
-hs_symregg_run dataset gens alg maxSize nonterminals loss optIter optRepeat nParams folds trace simplify dumpTo loadFrom = do
+hs_symregg_run :: CString -> CInt -> CString -> CInt -> CString -> CString -> CInt -> CInt -> CInt -> CInt -> CInt -> CInt -> CInt -> CString -> CString -> CString -> IO CString
+hs_symregg_run dataset gens alg maxSize nonterminals loss optIter optRepeat nParams folds maxTime trace simplify dumpTo loadFrom varnames = do
   dataset' <- peekCString dataset
   nonterminals' <- peekCString nonterminals
   alg' <- peekCString alg
   loss' <- peekCString loss
   dumpTo' <- peekCString dumpTo
   loadFrom' <- peekCString loadFrom
-  out  <- symregg_run dataset' (fromIntegral gens) alg' (fromIntegral maxSize) nonterminals' loss' (fromIntegral optIter) (fromIntegral optRepeat) (fromIntegral nParams) (fromIntegral folds) (fromIntegral trace /= 0) (fromIntegral simplify /= 0) dumpTo' loadFrom'
+  varnames' <- peekCString varnames
+  out  <- symregg_run dataset' (fromIntegral gens) alg' (fromIntegral maxSize) nonterminals' loss' (fromIntegral optIter) (fromIntegral optRepeat) (fromIntegral nParams) (fromIntegral folds) (fromIntegral maxTime) (fromIntegral trace /= 0) (fromIntegral simplify /= 0) dumpTo' loadFrom' varnames'
   newCString out
 
 
 csvHeader :: String
-csvHeader = "id,view,Expression,Numpy,theta,size,loss_train,loss_val,loss_test,maxloss,R2_train,R2_val,R2_test,mdl_train,mdl_val,mdl_test"
+csvHeader = "id,view,Expression,Numpy,Math,theta,size,loss_train,loss_val,loss_test,maxloss,R2_train,R2_val,R2_test,mdl_train,mdl_val,mdl_test"
 
 opt :: Parser Args
 opt = Args
@@ -196,14 +197,25 @@ opt = Args
        <> showDefault
        <> help "load initial e-graph from a file."
        )
+  <*> option auto
+       ( long "max-time"
+       <> value (-1)
+       <> showDefault
+       <> help "maximum allowed time budget (in seconds, -1 it will run for the number of generations)"
+       )
+  <*> strOption
+       ( long "varnames"
+       <> value ""
+       <> showDefault
+       <> help "comma separated variable names." )
 
-symregg_run :: String -> Int -> String -> Int -> String -> String -> Int -> Int -> Int -> Int -> Bool -> Bool -> String -> String -> IO String
-symregg_run dataset gens alg maxSize nonterminals loss optIter optRepeat nParams folds trace simplify dumpTo loadFrom =
+symregg_run :: String -> Int -> String -> Int -> String -> String -> Int -> Int -> Int -> Int -> Int -> Bool -> Bool -> String -> String -> String -> IO String
+symregg_run dataset gens alg maxSize nonterminals loss optIter optRepeat nParams folds maxtime trace simplify dumpTo loadFrom varnames =
   case readMaybe alg of
        Nothing -> pure $ "Invalid algorithm " <> alg
        Just a  -> case readMaybe loss of
                        Nothing -> pure $ "Invalid loss function " <> loss
-                       Just l  -> let arg = Args dataset "" gens a maxSize folds trace simplify l optIter optRepeat nParams nonterminals dumpTo loadFrom
+                       Just l  -> let arg = Args dataset "" gens a maxSize folds trace simplify l optIter optRepeat nParams nonterminals dumpTo loadFrom maxtime varnames
                                   in symregg arg
 
 symregg :: Args -> IO String
